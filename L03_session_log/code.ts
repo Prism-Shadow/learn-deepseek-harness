@@ -147,8 +147,8 @@ function bashPlugin(ctx: Ctx) {
 }
 
 function logPlugin(ctx: Ctx) {
-  ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
+  ctx.on("tools/result", ({ exec }) => {
+    console.log(`\x1b[90m  [log] 工具 "${exec.name}" 执行完毕\x1b[0m`)
   })
 }
 
@@ -157,7 +157,7 @@ function logPlugin(ctx: Ctx) {
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
   // SYSTEM 每次组装、不写入日志：它属于请求信封，不属于对话历史
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])
@@ -178,7 +178,7 @@ async function step(ctx: Ctx, session: Session): Promise<boolean> {
     const output: string = ctx.services.tools.execute(call.function.name, args)
     console.log(output.slice(0, 300))
     session.append("tool/result", { tool_call_id: call.id, content: output }, true)
-    await ctx.emit("tool:executed", { name: call.function.name, args, output })
+    await ctx.emit("tools/result", { exec: { name: call.function.name, args }, result: { content: output } })
   }
   return true
 }

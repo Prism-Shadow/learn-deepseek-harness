@@ -174,7 +174,7 @@ function subagentPlugin(ctx: Ctx) {
 //  父循环（execute 现为异步）
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])

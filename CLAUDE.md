@@ -41,6 +41,8 @@
 - **行文正式、简洁**：不用口语化表达（"到点喊人""喊一嗓子""举手""焊死""插座板""购物清单"…）和比喻（"治病/病根"）。用直接的技术词：事件说「触发/广播/监听/注册」，ctx 说「共享上下文」，disposer 说「注销函数」。L1 刻意保留的不足统一叫「局限 ❶❷❸」，后续「解决/改进」它们。
 - **注释只写 why**：说明「为什么这么做／解决了什么／边界在哪」，不复述代码在做什么。能不加就不加。
 - **README 结构固定**：`要解决什么问题/要说什么` → `核心代码` → `工作原理(ASCII 图)` → `三根支柱在本课的体现`(表格) → `试一下` → `接下来`。**图用 ASCII，不做 SVG。**
+- **承上启下，禁止「先使用后定义」**：阅读顺序固定 root `README.md` → L1 → … → L10。任何概念/术语/变量首次出现时必须此前已解释过。写完每课以「只读到此处的读者」视角自检，不留裸术语；root README 作为总览可提前点名后续概念，但须附一句直观说明。
+- **命名对齐真实 harness**：节俭前提下，类型/事件/变量名尽量与真源码一致（`ctx`、`Session`、`surface`、`deriveMessages`、`surfaceOp:{op:'replace'}`、`agent/pre-step`、`tools/pre-execute|post-execute|result`、`guard`、`compact/*` 等）。自造名字须在「对照真实 harness」小节点明映射。
 - **对照真实 harness**：每课点一下我们的迷你实现对应真源码里的什么（见第 5 节映射）。
 
 ## 4. 技术栈 & 命令
@@ -57,9 +59,10 @@
 | `ctx` + `ctx.services` | Cordis 的 `Context` + service 注册 |
 | `ctx.on` / `emit`（通知型） | Cordis 事件（notification） |
 | `ctx.waterfall`（可拦截改写） | Cordis waterfall / 各扩展点 |
-| `pre-step` 瀑布 | `agent/pre-step` |
-| `Session` 事件日志 + `surface` 名单 | 事件溯源 session：log + surface（seq 数组） |
+| `agent/pre-step` 瀑布（我们的） | `agent/pre-step`（同名） |
+| `Session` 事件日志 + `surface` | 事件溯源 session：log + surface（seq 数组） |
 | surface 的 `replace`（L6 起） | 压缩的 `surfaceOp: {op:'replace'}` |
+| `tools/result` 通知 | `tools/result`（同名） |
 
 ## 6. 课程路线图与进度
 

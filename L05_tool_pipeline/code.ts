@@ -239,7 +239,7 @@ function permissionPlugin(ctx: Ctx) {
 //  循环：先记录 tool/call(审计意图)，再执行管线，最后记录 tool/result
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])

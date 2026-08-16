@@ -154,9 +154,9 @@ function memoryPlugin(ctx: Ctx) {
     },
   )
 
-  // 召回：本会话首次 pre-step 时，把既有事实作为一条事件写入 surface（仅一次）。
+  // 召回：本会话首次 agent/pre-step 时，把既有事实作为一条事件写入 surface（仅一次）。
   // 它较早且稳定，故对缓存友好。真实系统会按相关性检索，这里注入全部。
-  ctx.on("pre-step", async ({ session }: { session: Session }, next: NextFn) => {
+  ctx.on("agent/pre-step", async ({ session }: { session: Session }, next: NextFn) => {
     if (!recalled && memories.length) {
       recalled = true
       const list = memories.map((m, i) => `${i + 1}. ${m.text}`).join("\n")
@@ -171,7 +171,7 @@ function memoryPlugin(ctx: Ctx) {
 //  循环（同 L3）
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])

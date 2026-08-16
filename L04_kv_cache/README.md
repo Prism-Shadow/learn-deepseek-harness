@@ -16,11 +16,11 @@
 
 ## 核心：第一个上下文注入插件
 
-对应真实 harness 的 `time-context`：在 `pre-step` 瀑布中取到下游消息后，注入上下文。
+对应真实 harness 的 `time-context`：在 `agent/pre-step` 瀑布中取到下游消息后，注入上下文。
 
 ```ts
 function timeContextPlugin(ctx) {
-  ctx.on("pre-step", async (_payload, next) => {
+  ctx.on("agent/pre-step", async (_payload, next) => {
     const messages = await next()                          // [system, ...历史]
     const ctxMsg = { role: "user", content: `[上下文] 当前时间：${new Date()}` }  // 每轮不同的值
     return injectMode === "append"
@@ -48,7 +48,7 @@ console.log(`[KV] 输入 ${total} tokens：命中 ${hit} / 未命中 ${miss}`)
 
 | 支柱 | 本课 |
 |------|------|
-| 🧩 P1 一切皆插件 | 保持：上下文注入是又一个插件，挂在 `pre-step`，循环不变。 |
+| 🧩 P1 一切皆插件 | 保持：上下文注入是又一个插件，挂在 `agent/pre-step`，循环不变。 |
 | 📜 P2 Session Log | 保持：对话仍从日志派生。（本课注入仅作用于当次请求、未写入日志；真实 harness 会一并记入日志，此处为聚焦 KV 而从简。） |
 | ⚡ **P3 KV Cache** | ✅ 本课主题。注入插件 + 实测缓存命中 + append/prepend 对比。 |
 

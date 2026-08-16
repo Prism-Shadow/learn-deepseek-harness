@@ -125,8 +125,8 @@ function bashPlugin(ctx: Ctx) {
 //  它不改动循环与 bash，证明新增能力无需修改主干
 // ═══════════════════════════════════════════════════════════════
 function logPlugin(ctx: Ctx) {
-  ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
+  ctx.on("tools/result", ({ exec }) => {
+    console.log(`\x1b[90m  [log] 工具 "${exec.name}" 执行完毕\x1b[0m`)
   })
 }
 
@@ -134,8 +134,8 @@ function logPlugin(ctx: Ctx) {
 //  精简循环：只触发事件、调用服务，不含任何具体能力
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, history: ChatCompletionMessageParam[]): Promise<boolean> {
-  // pre-step 瀑布：请求前的统一介入点。当前无监听器，base 原样返回 history；L4 起在此注入上下文
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { history }, async () => history)
+  // agent/pre-step 瀑布：请求前的统一介入点。当前无监听器，base 原样返回 history；L4 起在此注入上下文
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { history }, async () => history)
 
   const res = await client.chat.completions.create({
     model: MODEL,
@@ -153,7 +153,7 @@ async function step(ctx: Ctx, history: ChatCompletionMessageParam[]): Promise<bo
     const output: string = ctx.services.tools.execute(call.function.name, args)
     console.log(output.slice(0, 300))
     history.push({ role: "tool", tool_call_id: call.id, content: output })
-    await ctx.emit("tool:executed", { name: call.function.name, args, output })
+    await ctx.emit("tools/result", { exec: { name: call.function.name, args }, result: { content: output } })
   }
   return true
 }

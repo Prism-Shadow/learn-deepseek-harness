@@ -192,7 +192,7 @@ function permissionPlugin(ctx: Ctx) {
 
 function timeContextPlugin(ctx: Ctx) {
   // 追加到末尾，保持前缀稳定（P3）
-  ctx.on("pre-step", async (_p: unknown, next: NextFn) => {
+  ctx.on("agent/pre-step", async (_p: unknown, next: NextFn) => {
     const messages: ChatCompletionMessageParam[] = await next()
     return [...messages, { role: "user", content: `[上下文] 当前时间：${new Date().toISOString()}` }]
   })
@@ -212,7 +212,7 @@ function memoryPlugin(ctx: Ctx) {
       return `已记住：${args.fact}`
     },
   )
-  ctx.on("pre-step", async ({ session }: { session: Session }, next: NextFn) => {
+  ctx.on("agent/pre-step", async ({ session }: { session: Session }, next: NextFn) => {
     if (!recalled && memories.length) {
       recalled = true
       session.append("user/message", { content: `[记忆] 既有事实：\n${memories.map((m, i) => `${i + 1}. ${m.text}`).join("\n")}` }, "append")
@@ -229,7 +229,7 @@ function compactionPlugin(ctx: Ctx, threshold = 10, retain = 4) {
     const res = await client.chat.completions.create({ model: MODEL, messages, tools: ctx.services.tools.schemas(), max_tokens: 1024 })
     return res.choices[0].message.content ?? "(摘要为空)"
   }
-  ctx.on("pre-step", async ({ session }: { session: Session }, next: NextFn) => {
+  ctx.on("agent/pre-step", async ({ session }: { session: Session }, next: NextFn) => {
     if (session.surface.length > threshold && session.surface.length > retain) {
       let cut = session.surface.length - retain
       while (cut < session.surface.length && session.typeOfSeq(session.surface[cut]) === "tool/result") cut++
@@ -253,7 +253,7 @@ function compactionPlugin(ctx: Ctx, threshold = 10, retain = 4) {
 //  循环
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])

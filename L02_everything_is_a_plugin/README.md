@@ -36,7 +36,7 @@ DeepSeek Harness 的核心思路：
 
 ```ts
 async function step(ctx, history) {
-  const messages = await ctx.waterfall("pre-step", { history }, async () => history)  // 请求前统一介入点
+  const messages = await ctx.waterfall("agent/pre-step", { history }, async () => history)  // 请求前统一介入点
   const res = await client.chat.completions.create({
     messages, tools: ctx.services.tools.schemas(),   // 工具清单来自注册表
   })
@@ -45,13 +45,13 @@ async function step(ctx, history) {
   for (const call of msg.tool_calls) {
     const output = ctx.services.tools.execute(...)    // 执行也经由注册表
     history.push({ role: "tool", ... })
-    await ctx.emit("tool:executed", { name, args, output })
+    await ctx.emit("tools/result", { exec: { name }, result: { content: output } })
   }
   return true
 }
 ```
 
-循环内不含任何具体工具名，也不知道是否存在日志。它只做三件事：触发 `pre-step`、向注册表取工具清单、请注册表执行。
+循环内不含任何具体工具名，也不知道是否存在日志。它只做三件事：触发 `agent/pre-step`、向注册表取工具清单、请注册表执行。
 
 ## bash 成为插件
 
@@ -67,7 +67,7 @@ function bashPlugin(ctx) {
 const ctx = new Ctx()
 ctx.provide("tools", createToolRegistry())
 bashPlugin(ctx)
-logPlugin(ctx)   // 纯观察者，仅监听 tool:executed
+logPlugin(ctx)   // 纯观察者，仅监听 tools/result
 ```
 
 ## 三根支柱在本课的体现
@@ -76,9 +76,9 @@ logPlugin(ctx)   // 纯观察者，仅监听 tool:executed
 |------|------|
 | 🧩 **P1 一切皆插件** | ✅ 本课主题。循环精简，bash / log 均为插件，经 ctx + 事件系统接入。 |
 | 📜 P2 Session Log | 未引入。`history` 仍是可变数组（局限 ❷）——由 L3 解决。 |
-| ⚡ P3 KV Cache | 未引入。但 `pre-step` 瀑布已就位——它是 L4 注入上下文、以及后续所有「请求前修改消息」的统一入口。 |
+| ⚡ P3 KV Cache | 未引入。但 `agent/pre-step` 瀑布已就位——它是 L4 注入上下文、以及后续所有「请求前修改消息」的统一入口。 |
 
-> **对照真实 DeepSeek Harness**：`ctx` 对应 Cordis 的 Context，`on` / `waterfall` 对应其事件系统，`pre-step` 对应 `agent/pre-step`。这约 30 行是其最小可运行内核。
+> **对照真实 DeepSeek Harness**：这些名字与真源码基本一致——`ctx` 对应 Cordis 的 Context，`on` / `emit` / `waterfall` 对应其事件系统，`agent/pre-step`、`tools/result` 与真源码同名。这约 30 行是其最小可运行内核。
 
 ## 试一下
 

@@ -7,7 +7,7 @@
  * 由此得出上下文注入的纪律：一律追加到末尾(append-only)，不修改中间。
  *
  * 本课：
- *   1) 接入第一个上下文注入插件（在 pre-step 向请求注入「当前时间」）
+ *   1) 接入第一个上下文注入插件（在 agent/pre-step 向请求注入「当前时间」）
  *   2) 打印 DeepSeek 返回的缓存命中 token 数
  *   3) 用 /append 与 /prepend 对比同一注入放在末尾与开头对缓存命中的影响
  */
@@ -160,7 +160,7 @@ function bashPlugin(ctx: Ctx) {
 let injectMode: "append" | "prepend" = "append"
 
 function timeContextPlugin(ctx: Ctx) {
-  ctx.on("pre-step", async (_payload, next) => {
+  ctx.on("agent/pre-step", async (_payload, next) => {
     const messages: ChatCompletionMessageParam[] = await next()
     const ctxMsg: ChatCompletionMessageParam = {
       role: "user",
@@ -173,8 +173,8 @@ function timeContextPlugin(ctx: Ctx) {
 }
 
 function logPlugin(ctx: Ctx) {
-  ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
+  ctx.on("tools/result", ({ exec }) => {
+    console.log(`\x1b[90m  [log] 工具 "${exec.name}" 执行完毕\x1b[0m`)
   })
 }
 
@@ -182,7 +182,7 @@ function logPlugin(ctx: Ctx) {
 //  循环：新增读取并打印缓存命中数
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])
@@ -213,7 +213,7 @@ async function step(ctx: Ctx, session: Session): Promise<boolean> {
     const output: string = ctx.services.tools.execute(call.function.name, args)
     console.log(output.slice(0, 300))
     session.append("tool/result", { tool_call_id: call.id, content: output }, true)
-    await ctx.emit("tool:executed", { name: call.function.name, args, output })
+    await ctx.emit("tools/result", { exec: { name: call.function.name, args }, result: { content: output } })
   }
   return true
 }

@@ -3,7 +3,7 @@
  *
  * 对话变长后需要压缩：把较旧的一段替换为一条摘要，缩短后续请求。
  * 这一课让三根支柱同时发挥作用：
- *   P1 压缩是一个插件，挂在 pre-step，循环不改
+ *   P1 压缩是一个插件，挂在 agent/pre-step，循环不改
  *   P2 压缩不删日志——仅向日志追加 compact/* 与一条带 replace 的消息，改写 surface；原始事件保留
  *   P3 两处缓存要点：
  *      · 摘要请求复用当前对话前缀(把压缩指令放末尾)，避免为摘要重算整段
@@ -198,8 +198,8 @@ const THRESHOLD = 8 // surface 超过这么多条即自动压缩
 const RETAIN = 4 // 保留最近这么多条不压缩
 
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
-  // 压缩挂在 pre-step 最前：先(可能)压缩，再由 base 从压缩后的 surface 派生消息
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
+  // 压缩挂在 agent/pre-step 最前：先(可能)压缩，再由 base 从压缩后的 surface 派生消息
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("agent/pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])
@@ -220,7 +220,7 @@ async function step(ctx: Ctx, session: Session): Promise<boolean> {
 }
 
 function compactionPlugin(ctx: Ctx) {
-  ctx.on("pre-step", async ({ session }: { session: Session }, next: NextFn) => {
+  ctx.on("agent/pre-step", async ({ session }: { session: Session }, next: NextFn) => {
     await maybeCompact(ctx, session, THRESHOLD, RETAIN)
     return next()
   })

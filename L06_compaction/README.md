@@ -12,10 +12,10 @@
 
 ## 三根支柱如何同时发挥作用
 
-**P1（插件）**：压缩是一个挂在 `pre-step` 的插件，循环不变。它在请求前先执行，再由 base 从压缩后的 surface 派生消息：
+**P1（插件）**：压缩是一个挂在 `agent/pre-step` 的插件，循环不变。它在请求前先执行，再由 base 从压缩后的 surface 派生消息：
 
 ```ts
-ctx.on("pre-step", async ({ session }, next) => {
+ctx.on("agent/pre-step", async ({ session }, next) => {
   await maybeCompact(...)   // 可能改写 surface
   return next()             // base 从压缩后的 surface 派生
 })
@@ -50,7 +50,7 @@ const messages = [{ role: "system", content: SYSTEM }, ...rangeMsgs, { role: "us
 
 | 支柱 | 本课 |
 |------|------|
-| 🧩 P1 | ✅ 压缩是插件，挂 `pre-step`，循环不变。 |
+| 🧩 P1 | ✅ 压缩是插件，挂 `agent/pre-step`，循环不变。 |
 | 📜 P2 | ✅ 压缩=追加 `compact/*` + 一条 replace 消息；原事件保留，可重放。 |
 | ⚡ P3 | ✅ 摘要请求复用前缀（打印命中数）；压缩替换导致其后缓存失效（固有代价）。 |
 

@@ -30,8 +30,8 @@ function memoryPlugin(ctx) {
     return `已记住：${args.fact}`
   })
 
-  // 召回：本会话首次 pre-step，把事实作为一条事件写入 surface（仅一次）
-  ctx.on("pre-step", async ({ session }, next) => {
+  // 召回：本会话首次 agent/pre-step，把事实作为一条事件写入 surface（仅一次）
+  ctx.on("agent/pre-step", async ({ session }, next) => {
     if (!recalled && memories.length) {
       recalled = true
       session.append("user/message", { content: `[记忆] 既有事实：\n${list}` }, true)
@@ -45,13 +45,13 @@ function memoryPlugin(ctx) {
 
 | 支柱 | 本课 |
 |------|------|
-| 🧩 P1 一切皆插件 | 保持：记忆是一个插件（一个 `remember` 工具 + 一个 `pre-step` 召回监听）。 |
+| 🧩 P1 一切皆插件 | 保持：记忆是一个插件（一个 `remember` 工具 + 一个 `agent/pre-step` 召回监听）。 |
 | 📜 **P2 Session Log** | ✅ 写入是持久化追加（与事件日志同理：只增）；召回把事实作为一条事件进入 surface。 |
 | ⚡ **P3 KV Cache** | ✅ 召回的事实作为**较早且稳定**的一条注入一次，保持前缀稳定、缓存友好。 |
 
 > **一个关键权衡（连接真实系统）**：这里注入的是全部记忆、且只在会话开始注入一次，所以它是稳定前缀、缓存友好。但真实记忆系统会**按相关性检索**，每轮浮现的记忆可能不同——若把不同内容注入到较早位置，就会每轮改变前缀、破坏缓存。这正是需要**位置无关缓存（PIC）**的场景：让每个记忆块的缓存不绑定其绝对位置。这也是 DeepSeek Harness 这类系统在记忆方向上的前沿难点。
 
-> **对照真实 harness**：真实系统有独立的记忆能力接缝（写入/召回），召回通常在 `pre-step` 注入，存储在独立后端。
+> **对照真实 harness**：真实系统有独立的记忆能力接缝（写入/召回），召回通常在 `agent/pre-step` 注入，存储在独立后端。
 
 ## 试一下
 

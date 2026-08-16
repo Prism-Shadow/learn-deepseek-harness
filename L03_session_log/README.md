@@ -96,4 +96,4 @@ npm run dev
 
 ## 接下来
 
-L4 引入第三根支柱——**对 KV Cache 敏感**：接入第一个上下文注入插件（在 `pre-step` 修改消息），并实测 `prompt_cache_hit_tokens`，验证「追加到末尾」命中缓存、「修改中间」使缓存从该处起全部失效。
+L4 引入第三根支柱——**对 KV Cache 敏感**：接入第一个上下文注入插件（在 `agent/pre-step` 修改消息），并实测 `prompt_cache_hit_tokens`，验证「追加到末尾」命中缓存、「修改中间」使缓存从该处起全部失效。
