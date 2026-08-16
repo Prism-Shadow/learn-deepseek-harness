@@ -1,5 +1,13 @@
 # L4 · 对 KV Cache 敏感 (支柱 P3 ⚡)
 
+## 相比上一课（L3 → L4）
+
+- 新增 `timeContextPlugin`：在 `agent/pre-step` 注入上下文。
+- 循环新增读取并打印 DeepSeek 的缓存命中（`prompt_cache_hit_tokens`）。
+- 新增 `/append`、`/prepend` 开关对比注入位置对缓存的影响；`SYSTEM` 加长以便观察缓存。
+
+---
+
 ## 这一课要说什么
 
 对话每步都发给 DeepSeek 一大串 token。服务端如何缓存它，我们的每个动作又如何影响缓存？

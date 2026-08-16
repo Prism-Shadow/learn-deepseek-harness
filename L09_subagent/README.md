@@ -1,5 +1,13 @@
 # L9 · 子 agent (P1)
 
+## 相比上一课（L8 → L9）
+
+- 注册表 `execute` 改为异步，新增 `schemasFor` 提供受限工具集。
+- 新增 `subagent` 插件：`spawn_subagent` 派生带独立 `Session` 的子循环，仅回传结论。
+- 为聚焦委派，本课仅保留 `bash`。
+
+---
+
 ## 这一课要说什么
 
 把「派生一个带独立上下文的子循环」做成一个工具 `spawn_subagent(task)`。子 agent 拥有自己独立的 Session，完成任务后**只把最终结果回传**给父 agent。

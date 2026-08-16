@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Learn DeepSeek Harness</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <button id="menu-btn" class="menu-btn" aria-label="打开目录">☰</button>
+    <span class="topbar-title">Learn DeepSeek Harness</span>
+  </div>
+  <div id="overlay" class="overlay"></div>
+  <nav class="sidebar">
+    <div class="brand">Learn DeepSeek Harness<small>一切皆插件 · Session Log · KV Cache</small></div>
+    <div class="nav-section">课程</div>
+    <ul id="lesson-list"></ul>
+    <div class="nav-section">工具</div>
+    <ul>
+      <li><a id="nav-diff" href="#diff">代码对比 (Diff)</a></li>
+    </ul>
+    <div class="repo-link">
+      <a href="https://github.com/Prism-Shadow/learn-deepseek-harness" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+    </div>
+  </nav>
+  <main id="main"></main>
+</div>
+
+<!-- 纯静态 + CDN 库：marked(渲染 README) / highlight.js(代码高亮) / jsdiff(代码对比) -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/diff@5/dist/diff.min.js"></script>
+<script src="./app.js" defer></script>
+</body>
+</html>

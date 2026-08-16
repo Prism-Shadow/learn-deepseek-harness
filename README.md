@@ -16,7 +16,7 @@
 
 至于**各类 agent 通用**的能力——子 agent、更多工具、task 系统、plan 系统等——它们并非 DeepSeek Harness 的独特之处，因此放在靠后的章节**简要提及**；而且一律以 DeepSeek Harness 最偏爱的形式接入：**作为插件**插进来（见 L9 起）。
 
-**为什么执着于「一切皆插件」？** 因为它为 **RSI（Self-Evolution，自我进化）**铺路：当一切能力都是可热插拔的插件，agent 就能在运行过程中对自己的 harness 代码做热更新、热插拔——先给自己造能力，再把有用的沉淀下来。L10 展示了这一机制的雏形；**如何在 DeepSeek Harness 之上真正实现 RSI / Self-Evolution，将在后续章节展开**。
+**为什么执着于「一切皆插件」？** 因为它为 **RSI（Recursive Self-Improvement，递归自我进化）** 铺路：当一切能力都是可热插拔的插件，agent 就能在运行过程中对自己的 harness 代码做热更新、热插拔——先给自己造能力，再把有用的沉淀下来。L10 展示了这一机制的雏形；**如何在 DeepSeek Harness 之上真正实现 RSI / Self-Evolution，将在后续章节展开**。
 
 ---
 

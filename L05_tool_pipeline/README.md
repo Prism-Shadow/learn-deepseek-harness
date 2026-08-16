@@ -1,5 +1,13 @@
 # L5 · 工具管线 + 权限 (P1 + P2)
 
+## 相比上一课（L4 → L5）
+
+- 工具注册表升级为分层管线：`tools/pre-execute → guard → 执行 → tools/post-execute → tools/result`。
+- 新增 `read_file` 工具、`permission` 插件、`confirm` 服务；新增 `tool/call` 审计事件。
+- 为聚焦管线，本课未叠加 L4 的上下文注入（L8 会重新组合）。
+
+---
+
 ## 这一课要说什么
 
 前几课工具执行是一次直接的函数调用。真实 harness 把它升级为一条**分层管线**，让权限、审计、结果改写各自作为独立环节接入：

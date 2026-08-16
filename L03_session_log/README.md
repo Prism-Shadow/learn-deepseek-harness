@@ -1,5 +1,13 @@
 # L3 · Session Log 是唯一真相 (支柱 P2 📜)
 
+## 相比上一课（L2 → L3）
+
+- 新增 `Session`：append-only 事件日志 + `surface` + `deriveMessages`。
+- 循环改为向 `Session` 追加事件（`user/message` / `assistant/message` / `tool/result` 及 `turn/start` `turn/end`）。
+- 新增 `/log`、`/surface` 命令查看日志与 surface。
+
+---
+
 ## 这一课要解决的问题
 
 L2 里对话仍是可变数组 `history`（局限 ❷），有三个弱点：

@@ -51,6 +51,7 @@
 - **运行**：`npm run dev`（= `tsx code.ts`，直接跑 .ts，无需编译）。
 - **类型检查**：`npx tsc --noEmit`（**不带文件名**，让它读 tsconfig；`tsc code.ts` 会忽略 tsconfig 用错默认值）。每课交付前必须 **0 报错**。
 - **KV 缓存观测**：DeepSeek 在 `usage` 里返回 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（openai 标准类型里没有，用 `as any` 取）。
+- **课程网站**：`docs/` 是托管到 GitHub Pages 的纯静态站点（目录 + README + 代码 + Diff）。**改动任何一课的 README/code.ts 后，必须重跑 `node docs/build.mjs` 重新生成并提交 `docs/lessons.json`**（Pages 不跑构建，内容需预先嵌入）。每课 README 顶部有「相比上一课」changelog，需随内容同步。
 
 ## 5. 迷你框架 → 真实 DeepSeek Harness 映射
 
