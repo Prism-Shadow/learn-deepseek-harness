@@ -16,7 +16,7 @@
  */
 
 import OpenAI from "openai"
-// 这几个类型来自 openai SDK，直接拿来用，帮我们在编辑器里自动补全、防手滑：
+// 这几个类型来自 openai SDK：
 //   ChatCompletionMessageParam —— 一条对话消息（要发给模型的）
 //   ChatCompletionTool         —— 一个工具的定义
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
@@ -72,13 +72,13 @@ function runBash(command: string): string {
 }
 
 // ── 核心：一个 while 循环，调工具直到模型停下 ──────────────
-// history 现在有类型了：一个「消息数组」。（它仍是可变的 —— 病根 ❷ 还在，L3 治）
+// history 是可变的 —— 病根 ❷ 还在，L3 治
 async function agentLoop(history: ChatCompletionMessageParam[]) {
   while (true) {
     // 病根 ❸：每转一圈，都把「整个 history」重新发给模型
     const res = await client.chat.completions.create({
       model: MODEL,
-      messages: history, // ← 不用再写 `as any` 了，类型对得上
+      messages: history,
       tools: TOOLS,
       max_tokens: 4000,
     })
@@ -93,7 +93,7 @@ async function agentLoop(history: ChatCompletionMessageParam[]) {
     for (const call of msg.tool_calls) {
       // call.function.arguments 是一个 JSON 字符串，parse 出来的形状要到运行时才知道，
       // 所以这里用 `as { command: string }` 声明我们期望的形状。
-      // 👉 这是个真实的边界：类型系统管不到「模型吐出来的 JSON」，真 harness 在这里做运行时校验。
+      // 这是个真实的边界：类型系统管不到「模型吐出来的 JSON」，真 harness 在这里做运行时校验。
       const args = JSON.parse(call.function.arguments) as { command: string }
       console.log(`\x1b[33m$ ${args.command}\x1b[0m`) // 黄色打印将要执行的命令
       const output = runBash(args.command)
