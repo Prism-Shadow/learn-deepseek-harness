@@ -4,8 +4,21 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Learn DeepSeek Harness</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<!-- 两套 highlight.js 主题：暗色默认启用，亮色默认禁用；切换主题时互换 -->
+<link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" disabled />
 <link rel="stylesheet" href="./styles.css" />
+<script>
+  // 尽早应用主题，避免首屏闪烁
+  ;(function () {
+    var t = localStorage.getItem("ldh-theme") || "dark"
+    document.documentElement.dataset.theme = t
+    var dark = document.getElementById("hljs-dark")
+    var light = document.getElementById("hljs-light")
+    if (dark) dark.disabled = t !== "dark"
+    if (light) light.disabled = t !== "light"
+  })()
+</script>
 </head>
 <body>
 <div class="app">
@@ -15,15 +28,19 @@
   </div>
   <div id="overlay" class="overlay"></div>
   <nav class="sidebar">
-    <div class="brand">Learn DeepSeek Harness<small>一切皆插件 · Session Log · KV Cache</small></div>
-    <div class="nav-section">课程</div>
+    <div class="brand">Learn DeepSeek Harness<small id="brand-sub"></small></div>
+    <div class="controls">
+      <button id="lang-btn" class="ctrl-btn" title="切换语言 / Toggle language"></button>
+      <button id="theme-btn" class="ctrl-btn" title="切换主题 / Toggle theme"></button>
+    </div>
+    <div class="nav-section" id="sec-lessons"></div>
     <ul id="lesson-list"></ul>
-    <div class="nav-section">工具</div>
+    <div class="nav-section" id="sec-tools"></div>
     <ul>
-      <li><a id="nav-diff" href="#diff">代码对比 (Diff)</a></li>
+      <li><a id="nav-diff" href="#diff"></a></li>
     </ul>
     <div class="repo-link">
-      <a href="https://github.com/Prism-Shadow/learn-deepseek-harness" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+      <a id="repo-link" href="https://github.com/Prism-Shadow/learn-deepseek-harness" target="_blank" rel="noopener"></a>
     </div>
   </nav>
   <main id="main"></main>
