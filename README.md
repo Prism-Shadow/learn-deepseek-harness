@@ -4,6 +4,22 @@
 
 ---
 
+## 和 Learn Claude Code 的区别
+
+本课的**形式**借鉴自 [Learn Claude Code](https://github.com/shareAI-lab/learn-claude-code)（一课一个可运行小包 + README），但**内核完全不同**。Claude Code 与 DeepSeek Harness 的设计逻辑是两条不同的路子——这门课只讲后者，并紧扣它区别于 Claude Code 的三个根本设计：
+
+- **🧩 一切皆插件**：极瘦的核心循环 + 一切能力皆为可插拔插件。
+- **📜 Session Log 是永久的历史与记忆**：对话是一条 append-only 事件日志，是唯一真相源。
+- **⚡ 对 KV Cache 的极度敏感**：所有上下文操作都以「是否破坏前缀缓存」为第一约束。
+
+课程主体紧扣这三点逐层展开（下文详述）。
+
+至于**各类 agent 通用**的能力——子 agent、更多工具、task 系统、plan 系统等——它们并非 DeepSeek Harness 的独特之处，因此放在靠后的章节**简要提及**；而且一律以 DeepSeek Harness 最偏爱的形式接入：**作为插件**插进来（见 L9 起）。
+
+**为什么执着于「一切皆插件」？** 因为它为 **RSI（Self-Evolution，自我进化）**铺路：当一切能力都是可热插拔的插件，agent 就能在运行过程中对自己的 harness 代码做热更新、热插拔——先给自己造能力，再把有用的沉淀下来。L10 展示了这一机制的雏形；**如何在 DeepSeek Harness 之上真正实现 RSI / Self-Evolution，将在后续章节展开**。
+
+---
+
 ## 三根支柱（这门课的骨架）
 
 DeepSeek Harness 之所以是它，就靠这三件事。整门课都在反复强化它们：
