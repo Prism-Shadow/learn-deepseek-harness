@@ -2,61 +2,58 @@
 
 ## 这一课要解决的问题
 
-L1 里，bash 工具、安全检查、循环逻辑**全焊死在一起**（局限 ❶）。想加一个 `read_file` 工具？得改 `agentLoop`。想加个日志？还得改 `agentLoop`。循环越长越乱，谁都不敢碰。
+L1 里 bash、安全检查、循环逻辑耦合在一起（局限 ❶）：新增一个工具或一条日志，都得修改 `agentLoop`。循环随功能增长而膨胀。
 
-DeepSeek Harness 的答案，也是它整个架构的灵魂：
+DeepSeek Harness 的核心思路：
 
-> **把循环做到极瘦——它只负责「跑 + 到点喊人」。所有真正的能力都是外挂的「插件」。**
+> **将循环收缩到最小——只负责驱动流程并在固定点触发事件；所有能力外置为插件。**
 
-## 靠两样东西实现
+## 两个基础设施
 
 ```
-        ┌─────────────── ctx（插座板）───────────────┐
-        │  services: { tools: 工具注册表, ... }        │   ← 能力挂这
-        │  事件总线: on() 举手 / emit() 喊一嗓子        │   ← 插件在这接头
-        └────────────────────────────────────────────┘
+        ┌──────────────── 共享上下文 ctx ────────────────┐
+        │  services: { tools: 工具注册表, ... }            │  服务注册于此
+        │  事件系统: on 注册监听 / emit 广播 / waterfall   │  插件在此接入
+        └─────────────────────────────────────────────────┘
                  ▲              ▲               ▲
-          bash 插件       log 插件      (以后)上下文/压缩/记忆插件
-         (登记工具)      (监听事件)          全都往这挂
+            bash 插件       log 插件      后续：上下文/压缩/记忆插件
+          (注册工具)     (监听事件)
 
-        瘦循环: 只做两件事 —— 到点 emit 喊人、用 ctx.services.tools 干活
+        精简循环：仅触发事件 + 经由 ctx.services 调用能力
 ```
 
-**① ctx（插座板）**：一块共享的板子。能力（service）挂上去，谁都能 `ctx.services.xxx` 取用。
-**② 事件总线**：循环跑到某个时刻 `emit`（喊一嗓子），插件用 `on` 举手接住。
+- **共享上下文 ctx**：服务（能力）注册于此，插件间通过 `ctx.services.xxx` 获取。
+- **事件系统**：循环在固定点触发事件，插件监听并介入。
 
-事件有两种，这门课反复用：
+事件分两类，全课反复使用：
 
-| 类型 | 像什么 | 能干嘛 | 例子 |
-|------|--------|--------|------|
-| `emit` **通知型** | 广播 | 只通知，**改不了主干** | "某工具执行完了" |
-| `waterfall` **瀑布型** | 中间件链 | 一个个传，**每个都能改了再往下交** | "发请求前，往消息里加东西" |
+| 类型 | 语义 | 能否改变主流程 | 用途 |
+|------|------|----------------|------|
+| `emit` 通知型 | 广播 | 否 | 「工具已执行」 |
+| `waterfall` 瀑布型 | 依次传递，可改写后再传 | 是 | 「请求前修改消息」 |
 
-## 核心：循环瘦成什么样
+## 核心：循环的精简形态
 
 ```ts
 async function step(ctx, history) {
-  // 「发请求前」这一刻——插件可以在这往消息里加东西（现在还没人挂，L4 会来）
-  const messages = await ctx.waterfall("pre-step", { history }, async () => history)
-
+  const messages = await ctx.waterfall("pre-step", { history }, async () => history)  // 请求前统一介入点
   const res = await client.chat.completions.create({
-    messages, tools: ctx.services.tools.schemas(),  // ← 工具清单来自注册表，不写死
+    messages, tools: ctx.services.tools.schemas(),   // 工具清单来自注册表
   })
   history.push(res.choices[0].message)
   if (!msg.tool_calls?.length) return false
-
   for (const call of msg.tool_calls) {
-    const output = ctx.services.tools.execute(...)   // ← 执行也走注册表
+    const output = ctx.services.tools.execute(...)    // 执行也经由注册表
     history.push({ role: "tool", ... })
-    await ctx.emit("tool:executed", { name, args, output })  // ← 喊一嗓子
+    await ctx.emit("tool:executed", { name, args, output })
   }
   return true
 }
 ```
 
-循环里**没有任何一个具体工具的名字**，也不知道有没有日志。它只是：到点喊人、问注册表要工具、让注册表执行。
+循环内不含任何具体工具名，也不知道是否存在日志。它只做三件事：触发 `pre-step`、向注册表取工具清单、请注册表执行。
 
-## bash 现在是一个插件
+## bash 成为插件
 
 ```ts
 function bashPlugin(ctx) {
@@ -64,24 +61,24 @@ function bashPlugin(ctx) {
 }
 ```
 
-组装时才把它挂上：
+组装时接入：
 
 ```ts
 const ctx = new Ctx()
-ctx.provide("tools", createToolRegistry())  // 提供「工具注册表」
-bashPlugin(ctx)   // 挂 bash
-logPlugin(ctx)    // 挂 log（纯观察者，只监听 tool:executed）
+ctx.provide("tools", createToolRegistry())
+bashPlugin(ctx)
+logPlugin(ctx)   // 纯观察者，仅监听 tool:executed
 ```
 
 ## 三根支柱在本课的体现
 
 | 支柱 | 本课 |
 |------|------|
-| 🧩 **P1 一切皆插件** | ✅ **本课主角**。循环极瘦，bash / log 都是插件，通过 ctx + 事件总线挂上。 |
-| 📜 P2 Session Log | 还没上。`history` 仍是可变数组（局限 ❷ 还在）——由 L3 解决。 |
-| ⚡ P3 KV Cache | 还没上。但注意 `pre-step` 瀑布已经埋好——它就是 L4 做上下文注入、L3 之后所有"往对话加东西"的统一入口。 |
+| 🧩 **P1 一切皆插件** | ✅ 本课主题。循环精简，bash / log 均为插件，经 ctx + 事件系统接入。 |
+| 📜 P2 Session Log | 未引入。`history` 仍是可变数组（局限 ❷）——由 L3 解决。 |
+| ⚡ P3 KV Cache | 未引入。但 `pre-step` 瀑布已就位——它是 L4 注入上下文、以及后续所有「请求前修改消息」的统一入口。 |
 
-> **对照真实的 DeepSeek Harness**：真源码里 `ctx` 就是 Cordis 的 Context，`on/waterfall` 就是它的事件系统，`agent/pre-step` 就是我们这个 `pre-step` 瀑布。我们这 30 行迷你框架，是它那套东西的"最小可运行内核"。
+> **对照真实 DeepSeek Harness**：`ctx` 对应 Cordis 的 Context，`on` / `waterfall` 对应其事件系统，`pre-step` 对应 `agent/pre-step`。这约 30 行是其最小可运行内核。
 
 ## 试一下
 
@@ -91,12 +88,12 @@ npm install
 npm run dev
 ```
 
-问它 `列一下当前目录的文件`，你会看到：
-- 黄色 `$ ls` 是模型要跑的命令；
-- 灰色 `[log 插件] 观察到工具 "bash" 执行完毕` 是 **log 插件**在旁边偷偷记的。
+输入 `列出当前目录的文件`，可见：
+- 黄色 `$ ls` 为模型请求执行的命令；
+- 灰色 `[log] 工具 "bash" 执行完毕` 来自 log 插件。
 
-**亲手验证「加功能不改主干」**：把 `code.ts` 结尾的 `logPlugin(ctx)` 那行注释掉，重跑——灰色日志消失了，**而循环代码一个字都没动**。这就是插件架构的全部意义。想再体会，可以照着 `bashPlugin` 的样子写一个 `read_file` 插件，只在组装处加一行 `readFilePlugin(ctx)`。
+**验证「新增能力不改主干」**：注释掉 `code.ts` 末尾的 `logPlugin(ctx)` 后重跑，灰色日志消失，而循环代码未变。可仿照 `bashPlugin` 写一个 `read_file` 插件，仅在组装处新增一行。
 
 ## 接下来
 
-插件框架有了，但对话状态还是那个"谁都能乱改、崩了就没"的可变数组 `history`（局限 ❷）。**L3** 上第二根支柱——把 `history` 换成 **append-only 的事件日志**，让「Session Log 成为永远的唯一真相」，模型看到的对话从日志**派生**出来。这是压缩、记忆、崩溃恢复的共同地基。
+对话状态仍是可被任意修改、进程结束即丢失的数组 `history`（局限 ❷）。L3 引入第二根支柱——将其换成 **append-only 事件日志**，模型看到的对话由日志**派生**。这是压缩、记忆、崩溃恢复的共同地基。

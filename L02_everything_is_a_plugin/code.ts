@@ -1,17 +1,16 @@
 /**
  * L2 · 一切皆插件 (支柱 P1)
  *
- * L1 的局限 ❶：bash 工具、循环逻辑全焊死在一起，加个能力就得改循环。
+ * 解决 L1 局限 ❶：能力与循环耦合。做法是把循环收缩到最小——只负责驱动流程并在
+ * 固定扩展点触发事件；工具等能力全部外置为插件，通过共享上下文与事件系统接入。
  *
- * 这一课动第一刀，也是 DeepSeek Harness 最重要的思想：
- *   把循环做到极瘦——它只负责「跑 + 到点喊人」；
- *   真正的能力(工具、以后的上下文/压缩/记忆)全是外挂的「插件」。
+ * 两个基础设施：
+ *   1) 共享上下文 ctx —— 服务(能力)注册于此，插件间通过它互相获取
+ *   2) 事件系统    —— 循环在固定点触发事件，插件监听并介入
  *
- * 靠两样东西实现：
- *   1) 一个共享的 ctx —— 一块"插座板"，能力挂上去，大家互相取用
- *   2) 一条事件总线 —— 循环跑到某个时刻就 emit("喊一嗓子")，插件用 on() 举手接住
- *
- * 加功能 = 加一个插件；循环本身一个字都不用改。本课末尾你会亲手验证这点。
+ * 事件分两类：
+ *   emit      通知型：仅广播，监听者无法改变主流程（如「工具已执行」）
+ *   waterfall 瀑布型：依次传递，每个监听器可改写内容后再传给下一个（如「请求前修改消息」）
  */
 
 import OpenAI from "openai"
@@ -28,30 +27,24 @@ const MODEL = process.env.MODEL_ID ?? "deepseek-chat"
 const SYSTEM = `You are a coding agent working in ${process.cwd()}. Use tools to accomplish tasks. Act, don't over-explain.`
 
 // ═══════════════════════════════════════════════════════════════
-//  迷你框架：ctx(插座板) + 事件总线      —— 这就是「一切皆插件」的底座
-//  (后面每一课都会原样复制这一段，然后往上挂更多插件)
+//  迷你框架：共享上下文 + 事件系统（后续每课原样复制）
 //
-//  ⚖️ 关于类型的取舍(B 档)：这个框架内部我们故意用 `any` —— services 里放什么、
-//     每个事件的 payload 长什么样，是「运行期」由挂上来的插件决定的。想让它们全都
-//     有精确类型，得给 Ctx 加泛型 + 事件映射表(keyof/映射类型)，那是中级 TS，会
-//     盖过"一切皆插件"这个主题。真实的 DeepSeek Harness 确实那么做了(用泛型换来完整
-//     类型安全)，这是个真实的工程取舍。我们这门课在"框架内部"选可读性，在"外围
-//     (消息、工具)"选类型安全 —— 下面你会看到外围都标了类型。
+//  框架内部使用 any 是刻意的取舍(B 档)：services 里放什么、各事件 payload 的形状，
+//  都由运行期接入的插件决定。若要精确类型需为 Ctx 引入泛型与事件映射表(中级 TS)，
+//  会偏离本课主题。真实 DeepSeek Harness 用泛型换取了完整类型安全。
 // ═══════════════════════════════════════════════════════════════
 type NextFn = () => Promise<any>
 type Listener = (payload: any, next: NextFn) => Promise<any> | any
 
 class Ctx {
-  // 所有能力(service)都挂在这，用 ctx.services.xxx 取用
   services: Record<string, any> = {}
   private listeners: Record<string, Listener[]> = {}
 
-  /** 提供一个能力：把一个对象挂到插座板上 */
   provide(name: string, service: any) {
     this.services[name] = service
   }
 
-  /** 举手：监听某个时刻。返回一个"卸载函数"（拔插头） */
+  // 返回注销函数，便于插件卸载时清理自身监听
   on(event: string, fn: Listener): () => void {
     ;(this.listeners[event] ??= []).push(fn)
     return () => {
@@ -60,18 +53,11 @@ class Ctx {
     }
   }
 
-  /**
-   * 通知型事件：喊一嗓子，所有监听者各跑一遍。
-   * 谁爱听谁听，改不了主干（比如"某个工具执行完了"）。
-   */
   async emit(event: string, payload: any): Promise<void> {
     for (const fn of this.listeners[event] ?? []) await fn(payload, async () => {})
   }
 
-  /**
-   * 瀑布型事件：像一条中间件链，一个个往下传，每个插件都能"改了再往下交"。
-   * base 是链条走到底时的默认值。（比如"发请求前，往消息里加东西"）
-   */
+  // base 是链条走到末端时的默认返回值；每个监听器调用 next() 取得下游结果后可再加工
   async waterfall(event: string, payload: any, base: NextFn): Promise<any> {
     const chain = this.listeners[event] ?? []
     let i = 0
@@ -82,23 +68,20 @@ class Ctx {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  一个 service：工具注册表（工具不再写死，而是被"登记"进来）
+//  服务：工具注册表（工具改为注册接入，不再内联于循环）
 // ═══════════════════════════════════════════════════════════════
 function createToolRegistry() {
   const tools: Record<string, { schema: any; run: (args: any) => string }> = {}
   return {
-    /** 登记一个工具 */
     register(name: string, schema: any, run: (args: any) => string) {
       tools[name] = { schema, run }
     },
-    /** 拼成 DeepSeek/OpenAI 要的 tools 数组（发给模型看它有哪些工具） */
     schemas(): ChatCompletionTool[] {
       return Object.entries(tools).map(([name, t]) => ({
         type: "function",
         function: { name, ...t.schema },
       }))
     },
-    /** 执行一个工具 */
     execute(name: string, args: any): string {
       const t = tools[name]
       if (!t) return `Error: 未知工具 ${name}`
@@ -108,7 +91,7 @@ function createToolRegistry() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  插件 ①：bash —— 现在 bash 是一个插件，自己把工具登记进注册表
+//  插件 ①：bash —— 将 bash 注册为工具
 // ═══════════════════════════════════════════════════════════════
 function bashPlugin(ctx: Ctx) {
   function runBash(command: string): string {
@@ -122,7 +105,6 @@ function bashPlugin(ctx: Ctx) {
       return out ? out.slice(0, 50_000) : `Error: ${e.message}`
     }
   }
-
   ctx.services.tools.register(
     "bash",
     {
@@ -133,40 +115,32 @@ function bashPlugin(ctx: Ctx) {
         required: ["command"],
       },
     },
-    // 注意这个 `: { command: string }`：因为 ctx.services 是 any 类型(框架从简的代价)，
-    // 通过它拿到的 register 也是 any，回调参数就失去了上下文类型 —— strict 模式下必须自己标一下。
-    // 我们顺手标成 bash 真正的参数形状。这就是 B 档"偶尔手动补一下类型"的全部成本。
+    // 显式标注参数类型：经由 any 的 ctx.services 取到的 register 无上下文类型，strict 下需自行标注
     (args: { command: string }) => runBash(args.command),
   )
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  插件 ②：log —— 纯观察者。它只监听"工具执行完"这个通知，打条日志。
-//  注意它完全不碰循环、不碰 bash —— 这就是"加功能不改主干"的证据。
+//  插件 ②：log —— 纯观察者，仅监听「工具已执行」，不介入主流程
+//  它不改动循环与 bash，证明新增能力无需修改主干
 // ═══════════════════════════════════════════════════════════════
 function logPlugin(ctx: Ctx) {
   ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log 插件] 观察到工具 "${name}" 执行完毕\x1b[0m`)
+    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
   })
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  瘦循环：它只知道"喊人"，不知道任何具体能力
+//  精简循环：只触发事件、调用服务，不含任何具体能力
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, history: ChatCompletionMessageParam[]): Promise<boolean> {
-  // 「发请求前」这一刻——pre-step 瀑布。插件可以在这往即将发送的消息里加东西。
-  // 现在还没人监听，base 直接返回 history 原样。L4 会来挂上第一个上下文注入插件。
-  // waterfall 返回的是 any(框架内部从简)，这里用一个类型标注把它"接"成消息数组。
-  const messages: ChatCompletionMessageParam[] = await ctx.waterfall(
-    "pre-step",
-    { history },
-    async () => history,
-  )
+  // pre-step 瀑布：请求前的统一介入点。当前无监听器，base 原样返回 history；L4 起在此注入上下文
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { history }, async () => history)
 
   const res = await client.chat.completions.create({
     model: MODEL,
-    messages, // ← 不用再 `as any` 了
-    tools: ctx.services.tools.schemas(), // ← 工具清单来自注册表，不再写死
+    messages,
+    tools: ctx.services.tools.schemas(),
     max_tokens: 4000,
   })
   const msg = res.choices[0].message
@@ -174,13 +148,12 @@ async function step(ctx: Ctx, history: ChatCompletionMessageParam[]): Promise<bo
   if (!msg.tool_calls?.length) return false
 
   for (const call of msg.tool_calls) {
-    // 同 L1：模型吐的 JSON 形状是运行期才知道的边界，用 as 声明期望形状
     const args = JSON.parse(call.function.arguments) as { command: string }
     console.log(`\x1b[33m$ ${args.command ?? JSON.stringify(args)}\x1b[0m`)
-    const output: string = ctx.services.tools.execute(call.function.name, args) // ← 执行也走注册表
+    const output: string = ctx.services.tools.execute(call.function.name, args)
     console.log(output.slice(0, 300))
     history.push({ role: "tool", tool_call_id: call.id, content: output })
-    await ctx.emit("tool:executed", { name: call.function.name, args, output }) // ← 喊一嗓子
+    await ctx.emit("tool:executed", { name: call.function.name, args, output })
   }
   return true
 }
@@ -190,16 +163,13 @@ async function runAgent(ctx: Ctx, history: ChatCompletionMessageParam[]) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  组装：这才是「一切皆插件」真正的样子
-//  —— 建一块插座板，提供能力，挂上插件。想加/减功能，只改这几行。
+//  组装：新增/移除能力只改动这几行，循环不动
 // ═══════════════════════════════════════════════════════════════
 const ctx = new Ctx()
-ctx.provide("tools", createToolRegistry()) // 提供「工具注册表」这个能力
-bashPlugin(ctx) // 挂上 bash 插件
-logPlugin(ctx) // 挂上 log 插件（纯观察，不碰主干）
-// ⬆️ 试试把 logPlugin(ctx) 这行注释掉 —— 循环代码一个字都不用动，日志就没了。
+ctx.provide("tools", createToolRegistry())
+bashPlugin(ctx)
+logPlugin(ctx) // 注释掉此行可验证：移除能力无需改动循环
 
-// ── 入口 ──────────────────────────────────────────────────
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
 const history: ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM }]
 

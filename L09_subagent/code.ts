@@ -1,15 +1,13 @@
 /**
- * L4 · 对 KV Cache 敏感 (支柱 P3)
+ * L9 · 子 agent (P1)
  *
- * 服务端前缀缓存的规则：从首个 token 起逐字节一致的前缀才能命中、免于重算；
- * 一旦某位置改变，其后全部失效。
+ * 把「派生一个带独立上下文的子循环」做成一个工具：spawn_subagent(task)。
+ * 子 agent 有自己独立的 Session，完成任务后只把最终结果回传给父 agent。
  *
- * 由此得出上下文注入的纪律：一律追加到末尾(append-only)，不修改中间。
- *
- * 本课：
- *   1) 接入第一个上下文注入插件（在 pre-step 向请求注入「当前时间」）
- *   2) 打印 DeepSeek 返回的缓存命中 token 数
- *   3) 用 /append 与 /prepend 对比同一注入放在末尾与开头对缓存命中的影响
+ * 关键价值是上下文隔离：子 agent 探索过程中的大量工具调用与中间输出留在它自己的
+ * Session 里，不进入父 agent 的上下文。父 agent 只收到一段结论，上下文因而保持精简
+ * （也利于缓存与成本，呼应 P3）。子 agent 本身就是同一套循环——「一切皆插件」下，
+ * 它只是又一个被工具触发的循环实例。
  */
 
 import OpenAI from "openai"
@@ -23,16 +21,11 @@ const client = new OpenAI({
   baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
 })
 const MODEL = process.env.MODEL_ID ?? "deepseek-chat"
-
-// 系统提示写长一些，使前缀稳定超过 DeepSeek 缓存的最小块(约 64 tokens)，便于观察缓存
-const SYSTEM =
-  `You are a meticulous coding agent working in ${process.cwd()}. ` +
-  `Use the available tools to accomplish tasks. When asked to look something up, ` +
-  `call a tool and wait for its result before answering. Never invent tool output. ` +
-  `Answer concisely in the user's language. Act, don't over-explain.`
+const SYSTEM = `You are a coding agent working in ${process.cwd()}. For a self-contained sub-task that would involve many exploratory steps, delegate it via spawn_subagent to keep your own context clean. Act, don't over-explain.`
+const CHILD_SYSTEM = `You are a sub-agent with an isolated context. Complete the delegated task using bash, then report a concise final result. You cannot delegate further.`
 
 // ═══════════════════════════════════════════════════════════════
-//  迷你框架（同 L2/L3）
+//  迷你框架（同前）
 // ═══════════════════════════════════════════════════════════════
 type NextFn = () => Promise<any>
 type Listener = (payload: any, next: NextFn) => Promise<any> | any
@@ -76,14 +69,12 @@ class Session {
   events: SessionEvent[] = []
   surface: number[] = []
   private seqCounter = 0
-
   append(type: SessionEvent["type"], data: any, onSurface = false): SessionEvent {
     const event: SessionEvent = { seq: this.seqCounter++, type, data }
     this.events.push(event)
     if (onSurface) this.surface.push(event.seq)
     return event
   }
-
   deriveMessages(): ChatCompletionMessageParam[] {
     const bySeq = new Map(this.events.map((e) => [e.seq, e]))
     return this.surface.map((seq) => {
@@ -103,117 +94,100 @@ class Session {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  工具注册表 + bash/log 插件（同 L3）
+//  工具注册表：execute 改为异步（子 agent 的执行是异步的）
 // ═══════════════════════════════════════════════════════════════
 function createToolRegistry() {
-  const tools: Record<string, { schema: any; run: (args: any) => string }> = {}
+  const tools: Record<string, { schema: any; run: (args: any) => string | Promise<string> }> = {}
   return {
-    register(name: string, schema: any, run: (args: any) => string) {
+    register(name: string, schema: any, run: (args: any) => string | Promise<string>) {
       tools[name] = { schema, run }
     },
     schemas(): ChatCompletionTool[] {
-      return Object.entries(tools).map(([name, t]) => ({
-        type: "function",
-        function: { name, ...t.schema },
-      }))
+      return Object.entries(tools).map(([name, t]) => ({ type: "function", function: { name, ...t.schema } }))
     },
-    execute(name: string, args: any): string {
+    // 仅暴露指定名字的工具 schema，用于给子 agent 一个受限工具集（防止无限委派）
+    schemasFor(names: string[]): ChatCompletionTool[] {
+      return this.schemas().filter((t) => names.includes(t.function.name))
+    },
+    async execute(name: string, args: any): Promise<string> {
       const t = tools[name]
-      if (!t) return `Error: 未知工具 ${name}`
-      return t.run(args)
+      return t ? await t.run(args) : `Error: 未知工具 ${name}`
     },
   }
 }
 
 function bashPlugin(ctx: Ctx) {
-  function runBash(command: string): string {
-    const dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
-    if (dangerous.some((d) => command.includes(d))) return "Error: 危险命令已拦截"
-    try {
-      const out = execSync(command, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] })
-      return out.trim().slice(0, 50_000) || "(无输出)"
-    } catch (e: any) {
-      const out = ((e.stdout ?? "") + (e.stderr ?? "")).trim()
-      return out ? out.slice(0, 50_000) : `Error: ${e.message}`
-    }
-  }
   ctx.services.tools.register(
     "bash",
-    {
-      description: "Run a shell command and return its output.",
-      parameters: {
-        type: "object",
-        properties: { command: { type: "string", description: "the shell command" } },
-        required: ["command"],
-      },
+    { description: "Run a shell command.", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+    (args: { command: string }) => {
+      try {
+        return execSync(args.command, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] }).trim().slice(0, 50_000) || "(无输出)"
+      } catch (e: any) {
+        return (((e.stdout ?? "") + (e.stderr ?? "")).trim() || `Error: ${e.message}`).slice(0, 50_000)
+      }
     },
-    (args: { command: string }) => runBash(args.command),
   )
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ★ 本课新增：上下文注入插件（time-context 的最小形态）
-//  注入的是每轮都不同的值（当前时间），因此注入位置直接决定缓存命中：
-//    append  放末尾——其前的 [system + 对话] 前缀不变，命中
-//    prepend 放开头——改变前缀，其后全部失效
+//  ★ 本课主角：子 agent
 // ═══════════════════════════════════════════════════════════════
-let injectMode: "append" | "prepend" = "append"
 
-function timeContextPlugin(ctx: Ctx) {
-  ctx.on("pre-step", async (_payload, next) => {
-    const messages: ChatCompletionMessageParam[] = await next()
-    const ctxMsg: ChatCompletionMessageParam = {
-      role: "user",
-      content: `[上下文] 当前时间：${new Date().toISOString()}`,
+// 运行一个拥有独立 Session、受限工具集(仅 bash)的子循环，直至其不再调用工具，返回最终文本
+async function runSubagent(ctx: Ctx, task: string): Promise<string> {
+  const child = new Session()
+  child.append("user/message", { content: task }, true)
+  const childTools = ctx.services.tools.schemasFor(["bash"]) // 不含 spawn_subagent，避免无限委派
+
+  for (let guard = 0; guard < 20; guard++) {
+    const messages: ChatCompletionMessageParam[] = [{ role: "system", content: CHILD_SYSTEM }, ...child.deriveMessages()]
+    const res = await client.chat.completions.create({ model: MODEL, messages, tools: childTools, max_tokens: 2000 })
+    const msg = res.choices[0].message
+    child.append("assistant/message", { message: msg }, true)
+    if (!msg.tool_calls?.length) return typeof msg.content === "string" ? msg.content : "(子 agent 无输出)"
+    for (const call of msg.tool_calls) {
+      const args = JSON.parse(call.function.arguments)
+      console.log(`\x1b[90m    [子 agent] $ ${args.command}\x1b[0m`)
+      const output = await ctx.services.tools.execute(call.function.name, args)
+      child.append("tool/result", { tool_call_id: call.id, content: output }, true)
     }
-    return injectMode === "append"
-      ? [...messages, ctxMsg]
-      : [messages[0], ctxMsg, ...messages.slice(1)] // system 之后、对话之前
-  })
+  }
+  return "(子 agent 超出步数上限)"
 }
 
-function logPlugin(ctx: Ctx) {
-  ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
-  })
+function subagentPlugin(ctx: Ctx) {
+  ctx.services.tools.register(
+    "spawn_subagent",
+    {
+      description: "Delegate a self-contained sub-task to a fresh sub-agent with its own isolated context. Returns only its final result.",
+      parameters: { type: "object", properties: { task: { type: "string", description: "the self-contained task description" } }, required: ["task"] },
+    },
+    async (args: { task: string }) => {
+      console.log(`\x1b[90m  [派生子 agent] ${args.task}\x1b[0m`)
+      return await runSubagent(ctx, args.task) // 只有这段返回值进入父 agent 的上下文
+    },
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  循环：新增读取并打印缓存命中数
+//  父循环（execute 现为异步）
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
   const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])
-
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    messages,
-    tools: ctx.services.tools.schemas(),
-    max_tokens: 4000,
-  })
-
-  // DeepSeek 在 usage 附带 prompt_cache_hit_tokens / prompt_cache_miss_tokens，
-  // 不在 openai 标准类型中，经 as any 读取（外部 API 字段的合理边界）
-  const usage = res.usage as any
-  const hit = usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens ?? 0
-  const total = usage?.prompt_tokens ?? 0
-  const miss = usage?.prompt_cache_miss_tokens ?? total - hit
-  const pct = total ? Math.round((hit / total) * 100) : 0
-  console.log(`\x1b[35m[KV] 输入 ${total} tokens：命中 ${hit} (${pct}%) / 未命中 ${miss}  [注入模式: ${injectMode}]\x1b[0m`)
-
+  const res = await client.chat.completions.create({ model: MODEL, messages, tools: ctx.services.tools.schemas(), max_tokens: 4000 })
   const msg = res.choices[0].message
   session.append("assistant/message", { message: msg }, true)
   if (!msg.tool_calls?.length) return false
-
   for (const call of msg.tool_calls) {
-    const args = JSON.parse(call.function.arguments) as { command: string }
-    console.log(`\x1b[33m$ ${args.command ?? JSON.stringify(args)}\x1b[0m`)
-    const output: string = ctx.services.tools.execute(call.function.name, args)
-    console.log(output.slice(0, 300))
+    const args = JSON.parse(call.function.arguments)
+    console.log(`\x1b[33m$ ${call.function.name} ${JSON.stringify(args)}\x1b[0m`)
+    const output = await ctx.services.tools.execute(call.function.name, args)
+    console.log(output.slice(0, 200))
     session.append("tool/result", { tool_call_id: call.id, content: output }, true)
-    await ctx.emit("tool:executed", { name: call.function.name, args, output })
   }
   return true
 }
@@ -226,54 +200,25 @@ async function runTurn(ctx: Ctx, session: Session, userText: string) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  组装：新增 timeContextPlugin
+//  组装
 // ═══════════════════════════════════════════════════════════════
 const ctx = new Ctx()
 ctx.provide("tools", createToolRegistry())
 bashPlugin(ctx)
-timeContextPlugin(ctx)
-logPlugin(ctx)
+subagentPlugin(ctx)
 
 const session = new Session()
-
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
 
-console.log("L4 · 对 KV Cache 敏感")
-console.log("每次回复后打印 [KV] 缓存命中。命令：")
-console.log("  /append  上下文注入到末尾（append-only，正确）")
-console.log("  /prepend 上下文注入到开头（对照，观察缓存失效）")
-console.log("  /log /surface | q 退出")
-console.log("对比：/append 连续提问观察命中率上升；切 /prepend 观察命中率下降。\n")
+console.log("L9 · 子 agent")
+console.log("给它一个需要多步探索的任务，它会派生子 agent 处理并只回传结论。输入 q 退出。\n")
 
 while (true) {
-  const q = await rl.question("\x1b[36mL4 >> \x1b[0m")
-  const cmd = q.trim().toLowerCase()
-  if (["q", "exit", ""].includes(cmd)) break
-
-  if (cmd === "/append" || cmd === "/prepend") {
-    injectMode = cmd.slice(1) as "append" | "prepend"
-    console.log(`\x1b[35m注入模式: ${injectMode}\x1b[0m\n`)
-    continue
-  }
-  if (cmd === "/log") {
-    console.log("\x1b[90m── 事件日志 ──\x1b[0m")
-    for (const e of session.events) {
-      const on = session.surface.includes(e.seq) ? "\x1b[32m[在 surface]\x1b[0m" : "\x1b[90m[仅日志]\x1b[0m"
-      console.log(`  seq ${String(e.seq).padStart(2)} ${e.type.padEnd(18)} ${on}`)
-    }
-    console.log()
-    continue
-  }
-  if (cmd === "/surface") {
-    console.log(`\x1b[90msurface:\x1b[0m [${session.surface.join(", ")}]\n`)
-    continue
-  }
-
+  const q = await rl.question("\x1b[36mL9 >> \x1b[0m")
+  if (["q", "exit", ""].includes(q.trim().toLowerCase())) break
   await runTurn(ctx, session, q)
   const last = session.events[session.events.length - 2]
-  if (last?.type === "assistant/message" && typeof last.data.message.content === "string") {
-    console.log(last.data.message.content)
-  }
+  if (last?.type === "assistant/message" && typeof last.data.message.content === "string") console.log(last.data.message.content)
   console.log()
 }
 rl.close()

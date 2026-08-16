@@ -1,15 +1,17 @@
 /**
- * L4 · 对 KV Cache 敏感 (支柱 P3)
+ * L10 · 自我修改 (P1 的终极形态)
  *
- * 服务端前缀缓存的规则：从首个 token 起逐字节一致的前缀才能命中、免于重算；
- * 一旦某位置改变，其后全部失效。
+ * 让模型在运行时编写一个新工具并挂载进当前运行的 agent，随即就能调用它。
+ * 这是「一切皆插件」的终点：连"扩展自己"本身也是一个工具。
  *
- * 由此得出上下文注入的纪律：一律追加到末尾(append-only)，不修改中间。
+ * 之所以成立，靠两点：
+ *   · 工具清单在每一步都从注册表重新生成——运行时新增的工具下一步即对模型可见
+ *   · 注册表允许随时 register——新增无需重启
  *
- * 本课：
- *   1) 接入第一个上下文注入插件（在 pre-step 向请求注入「当前时间」）
- *   2) 打印 DeepSeek 返回的缓存命中 token 数
- *   3) 用 /append 与 /prepend 对比同一注入放在末尾与开头对缓存命中的影响
+ * 局限与边界（与真实 harness 一致）：
+ *   · 临时性：挂载的工具只存于内存，进程结束即失，无自动持久化/晋升路径
+ *   · 信任级别等同 bash：这里用 new Function 直接执行模型代码，不是安全边界
+ *   · 「能改自己」是自我修改；要成为自我进化，还需评估→晋升→持久化的闭环——本课不含
  */
 
 import OpenAI from "openai"
@@ -23,16 +25,14 @@ const client = new OpenAI({
   baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
 })
 const MODEL = process.env.MODEL_ID ?? "deepseek-chat"
-
-// 系统提示写长一些，使前缀稳定超过 DeepSeek 缓存的最小块(约 64 tokens)，便于观察缓存
 const SYSTEM =
-  `You are a meticulous coding agent working in ${process.cwd()}. ` +
-  `Use the available tools to accomplish tasks. When asked to look something up, ` +
-  `call a tool and wait for its result before answering. Never invent tool output. ` +
-  `Answer concisely in the user's language. Act, don't over-explain.`
+  `You are a coding agent working in ${process.cwd()}. ` +
+  `If a small pure transformation would help, you may create a tool for it via define_tool ` +
+  `(the tool body reads a variable 'input' and returns a value), then call the newly created tool. ` +
+  `Act, don't over-explain.`
 
 // ═══════════════════════════════════════════════════════════════
-//  迷你框架（同 L2/L3）
+//  迷你框架（同前）
 // ═══════════════════════════════════════════════════════════════
 type NextFn = () => Promise<any>
 type Listener = (payload: any, next: NextFn) => Promise<any> | any
@@ -76,14 +76,12 @@ class Session {
   events: SessionEvent[] = []
   surface: number[] = []
   private seqCounter = 0
-
   append(type: SessionEvent["type"], data: any, onSurface = false): SessionEvent {
     const event: SessionEvent = { seq: this.seqCounter++, type, data }
     this.events.push(event)
     if (onSurface) this.surface.push(event.seq)
     return event
   }
-
   deriveMessages(): ChatCompletionMessageParam[] {
     const bySeq = new Map(this.events.map((e) => [e.seq, e]))
     return this.surface.map((seq) => {
@@ -103,117 +101,102 @@ class Session {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  工具注册表 + bash/log 插件（同 L3）
+//  工具注册表（execute 异步；支持运行时随时 register）
 // ═══════════════════════════════════════════════════════════════
 function createToolRegistry() {
-  const tools: Record<string, { schema: any; run: (args: any) => string }> = {}
+  const tools: Record<string, { schema: any; run: (args: any) => string | Promise<string> }> = {}
   return {
-    register(name: string, schema: any, run: (args: any) => string) {
+    register(name: string, schema: any, run: (args: any) => string | Promise<string>) {
       tools[name] = { schema, run }
     },
+    // 每次请求都重新调用它生成工具清单——因此运行时新增的工具下一步即可见
     schemas(): ChatCompletionTool[] {
-      return Object.entries(tools).map(([name, t]) => ({
-        type: "function",
-        function: { name, ...t.schema },
-      }))
+      return Object.entries(tools).map(([name, t]) => ({ type: "function", function: { name, ...t.schema } }))
     },
-    execute(name: string, args: any): string {
+    async execute(name: string, args: any): Promise<string> {
       const t = tools[name]
-      if (!t) return `Error: 未知工具 ${name}`
-      return t.run(args)
+      return t ? await t.run(args) : `Error: 未知工具 ${name}`
     },
   }
 }
 
 function bashPlugin(ctx: Ctx) {
-  function runBash(command: string): string {
-    const dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
-    if (dangerous.some((d) => command.includes(d))) return "Error: 危险命令已拦截"
-    try {
-      const out = execSync(command, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] })
-      return out.trim().slice(0, 50_000) || "(无输出)"
-    } catch (e: any) {
-      const out = ((e.stdout ?? "") + (e.stderr ?? "")).trim()
-      return out ? out.slice(0, 50_000) : `Error: ${e.message}`
-    }
-  }
   ctx.services.tools.register(
     "bash",
-    {
-      description: "Run a shell command and return its output.",
-      parameters: {
-        type: "object",
-        properties: { command: { type: "string", description: "the shell command" } },
-        required: ["command"],
-      },
+    { description: "Run a shell command.", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+    (args: { command: string }) => {
+      try {
+        return execSync(args.command, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] }).trim().slice(0, 50_000) || "(无输出)"
+      } catch (e: any) {
+        return (((e.stdout ?? "") + (e.stderr ?? "")).trim() || `Error: ${e.message}`).slice(0, 50_000)
+      }
     },
-    (args: { command: string }) => runBash(args.command),
   )
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ★ 本课新增：上下文注入插件（time-context 的最小形态）
-//  注入的是每轮都不同的值（当前时间），因此注入位置直接决定缓存命中：
-//    append  放末尾——其前的 [system + 对话] 前缀不变，命中
-//    prepend 放开头——改变前缀，其后全部失效
+//  ★ 本课主角：自我修改工具 define_tool
 // ═══════════════════════════════════════════════════════════════
-let injectMode: "append" | "prepend" = "append"
-
-function timeContextPlugin(ctx: Ctx) {
-  ctx.on("pre-step", async (_payload, next) => {
-    const messages: ChatCompletionMessageParam[] = await next()
-    const ctxMsg: ChatCompletionMessageParam = {
-      role: "user",
-      content: `[上下文] 当前时间：${new Date().toISOString()}`,
-    }
-    return injectMode === "append"
-      ? [...messages, ctxMsg]
-      : [messages[0], ctxMsg, ...messages.slice(1)] // system 之后、对话之前
-  })
+function selfModificationPlugin(ctx: Ctx) {
+  ctx.services.tools.register(
+    "define_tool",
+    {
+      description:
+        "Create and mount a new tool at runtime for this session. The body reads a string variable `input` and returns a value. " +
+        "After creation, call the new tool by its name.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "new tool name (letters/underscore)" },
+          description: { type: "string" },
+          code: { type: "string", description: "JS function body; reads `input`, uses `return`" },
+        },
+        required: ["name", "description", "code"],
+      },
+    },
+    (args: { name: string; description: string; code: string }) => {
+      let fn: (input: string) => unknown
+      try {
+        // 直接执行模型编写的代码：信任级别等同 bash，非安全边界
+        fn = new Function("input", args.code) as (input: string) => unknown
+      } catch (e: any) {
+        return `Error: 代码解析失败 —— ${e.message}`
+      }
+      ctx.services.tools.register(
+        args.name,
+        { description: args.description, parameters: { type: "object", properties: { input: { type: "string" } }, required: ["input"] } },
+        (a: { input: string }) => {
+          try {
+            return String(fn(a.input))
+          } catch (e: any) {
+            return `Error: ${e.message}`
+          }
+        },
+      )
+      console.log(`\x1b[35m[self-mod] 已挂载新工具 "${args.name}"\x1b[0m`)
+      return `已挂载工具 "${args.name}"，本会话内可直接调用（临时，进程结束即失）。`
+    },
+  )
 }
 
-function logPlugin(ctx: Ctx) {
-  ctx.on("tool:executed", ({ name }) => {
-    console.log(`\x1b[90m  [log] 工具 "${name}" 执行完毕\x1b[0m`)
-  })
-}
-
 // ═══════════════════════════════════════════════════════════════
-//  循环：新增读取并打印缓存命中数
+//  循环
 // ═══════════════════════════════════════════════════════════════
 async function step(ctx: Ctx, session: Session): Promise<boolean> {
   const messages: ChatCompletionMessageParam[] = await ctx.waterfall("pre-step", { session }, async () => [
     { role: "system", content: SYSTEM },
     ...session.deriveMessages(),
   ])
-
-  const res = await client.chat.completions.create({
-    model: MODEL,
-    messages,
-    tools: ctx.services.tools.schemas(),
-    max_tokens: 4000,
-  })
-
-  // DeepSeek 在 usage 附带 prompt_cache_hit_tokens / prompt_cache_miss_tokens，
-  // 不在 openai 标准类型中，经 as any 读取（外部 API 字段的合理边界）
-  const usage = res.usage as any
-  const hit = usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens ?? 0
-  const total = usage?.prompt_tokens ?? 0
-  const miss = usage?.prompt_cache_miss_tokens ?? total - hit
-  const pct = total ? Math.round((hit / total) * 100) : 0
-  console.log(`\x1b[35m[KV] 输入 ${total} tokens：命中 ${hit} (${pct}%) / 未命中 ${miss}  [注入模式: ${injectMode}]\x1b[0m`)
-
+  const res = await client.chat.completions.create({ model: MODEL, messages, tools: ctx.services.tools.schemas(), max_tokens: 4000 })
   const msg = res.choices[0].message
   session.append("assistant/message", { message: msg }, true)
   if (!msg.tool_calls?.length) return false
-
   for (const call of msg.tool_calls) {
-    const args = JSON.parse(call.function.arguments) as { command: string }
-    console.log(`\x1b[33m$ ${args.command ?? JSON.stringify(args)}\x1b[0m`)
-    const output: string = ctx.services.tools.execute(call.function.name, args)
-    console.log(output.slice(0, 300))
+    const args = JSON.parse(call.function.arguments)
+    console.log(`\x1b[33m$ ${call.function.name} ${JSON.stringify(args).slice(0, 200)}\x1b[0m`)
+    const output = await ctx.services.tools.execute(call.function.name, args)
+    console.log(output.slice(0, 200))
     session.append("tool/result", { tool_call_id: call.id, content: output }, true)
-    await ctx.emit("tool:executed", { name: call.function.name, args, output })
   }
   return true
 }
@@ -226,54 +209,25 @@ async function runTurn(ctx: Ctx, session: Session, userText: string) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  组装：新增 timeContextPlugin
+//  组装
 // ═══════════════════════════════════════════════════════════════
 const ctx = new Ctx()
 ctx.provide("tools", createToolRegistry())
 bashPlugin(ctx)
-timeContextPlugin(ctx)
-logPlugin(ctx)
+selfModificationPlugin(ctx)
 
 const session = new Session()
-
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
 
-console.log("L4 · 对 KV Cache 敏感")
-console.log("每次回复后打印 [KV] 缓存命中。命令：")
-console.log("  /append  上下文注入到末尾（append-only，正确）")
-console.log("  /prepend 上下文注入到开头（对照，观察缓存失效）")
-console.log("  /log /surface | q 退出")
-console.log("对比：/append 连续提问观察命中率上升；切 /prepend 观察命中率下降。\n")
+console.log("L10 · 自我修改")
+console.log("可要求它先给自己造一个工具，再用这个工具。输入 q 退出。\n")
 
 while (true) {
-  const q = await rl.question("\x1b[36mL4 >> \x1b[0m")
-  const cmd = q.trim().toLowerCase()
-  if (["q", "exit", ""].includes(cmd)) break
-
-  if (cmd === "/append" || cmd === "/prepend") {
-    injectMode = cmd.slice(1) as "append" | "prepend"
-    console.log(`\x1b[35m注入模式: ${injectMode}\x1b[0m\n`)
-    continue
-  }
-  if (cmd === "/log") {
-    console.log("\x1b[90m── 事件日志 ──\x1b[0m")
-    for (const e of session.events) {
-      const on = session.surface.includes(e.seq) ? "\x1b[32m[在 surface]\x1b[0m" : "\x1b[90m[仅日志]\x1b[0m"
-      console.log(`  seq ${String(e.seq).padStart(2)} ${e.type.padEnd(18)} ${on}`)
-    }
-    console.log()
-    continue
-  }
-  if (cmd === "/surface") {
-    console.log(`\x1b[90msurface:\x1b[0m [${session.surface.join(", ")}]\n`)
-    continue
-  }
-
+  const q = await rl.question("\x1b[36mL10 >> \x1b[0m")
+  if (["q", "exit", ""].includes(q.trim().toLowerCase())) break
   await runTurn(ctx, session, q)
   const last = session.events[session.events.length - 2]
-  if (last?.type === "assistant/message" && typeof last.data.message.content === "string") {
-    console.log(last.data.message.content)
-  }
+  if (last?.type === "assistant/message" && typeof last.data.message.content === "string") console.log(last.data.message.content)
   console.log()
 }
 rl.close()
