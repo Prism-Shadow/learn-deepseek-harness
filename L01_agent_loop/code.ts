@@ -16,6 +16,10 @@
  */
 
 import OpenAI from "openai"
+// 这几个类型来自 openai SDK，直接拿来用，帮我们在编辑器里自动补全、防手滑：
+//   ChatCompletionMessageParam —— 一条对话消息（要发给模型的）
+//   ChatCompletionTool         —— 一个工具的定义
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import { execSync } from "node:child_process"
 import * as readline from "node:readline/promises"
 import "dotenv/config"
@@ -31,9 +35,10 @@ const SYSTEM = `You are a coding agent working in ${process.cwd()}. Use the bash
 
 // ── 工具定义：就一个 bash ────────────────────────────────
 // 这是「告诉模型你有哪些工具」的 schema（OpenAI/DeepSeek 的 function calling 格式）
-const TOOLS = [
+// 标上 ChatCompletionTool[]：写错字段名编辑器会立刻标红
+const TOOLS: ChatCompletionTool[] = [
   {
-    type: "function" as const,
+    type: "function",
     function: {
       name: "bash",
       description: "Run a shell command and return its output.",
@@ -67,13 +72,13 @@ function runBash(command: string): string {
 }
 
 // ── 核心：一个 while 循环，调工具直到模型停下 ──────────────
-// 注意 history 是一个「可变数组」——这一课全部的状态就是它。（病根 ❷）
-async function agentLoop(history: any[]) {
+// history 现在有类型了：一个「消息数组」。（它仍是可变的 —— 病根 ❷ 还在，L3 治）
+async function agentLoop(history: ChatCompletionMessageParam[]) {
   while (true) {
     // 病根 ❸：每转一圈，都把「整个 history」重新发给模型
     const res = await client.chat.completions.create({
       model: MODEL,
-      messages: history as any,
+      messages: history, // ← 不用再写 `as any` 了，类型对得上
       tools: TOOLS,
       max_tokens: 4000,
     })
@@ -86,7 +91,10 @@ async function agentLoop(history: any[]) {
 
     // 模型要调工具 → 逐个执行，把结果塞回对话
     for (const call of msg.tool_calls) {
-      const args = JSON.parse(call.function.arguments)
+      // call.function.arguments 是一个 JSON 字符串，parse 出来的形状要到运行时才知道，
+      // 所以这里用 `as { command: string }` 声明我们期望的形状。
+      // 👉 这是个真实的边界：类型系统管不到「模型吐出来的 JSON」，真 harness 在这里做运行时校验。
+      const args = JSON.parse(call.function.arguments) as { command: string }
       console.log(`\x1b[33m$ ${args.command}\x1b[0m`) // 黄色打印将要执行的命令
       const output = runBash(args.command)
       console.log(output.slice(0, 300))
@@ -102,7 +110,7 @@ async function agentLoop(history: any[]) {
 
 // ── 入口：一个简单的命令行对话框 ──────────────────────────
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const history: any[] = [{ role: "system", content: SYSTEM }]
+const history: ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM }]
 
 console.log("L1 · 最裸的循环")
 console.log("输入问题回车发送；输入 q 退出。\n")

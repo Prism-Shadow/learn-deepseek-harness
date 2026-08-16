@@ -15,6 +15,7 @@
  */
 
 import OpenAI from "openai"
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import { execSync } from "node:child_process"
 import * as readline from "node:readline/promises"
 import "dotenv/config"
@@ -29,6 +30,13 @@ const SYSTEM = `You are a coding agent working in ${process.cwd()}. Use tools to
 // ═══════════════════════════════════════════════════════════════
 //  迷你框架：ctx(插座板) + 事件总线      —— 这就是「一切皆插件」的底座
 //  (后面每一课都会原样复制这一段，然后往上挂更多插件)
+//
+//  ⚖️ 关于类型的取舍(B 档)：这个框架内部我们故意用 `any` —— services 里放什么、
+//     每个事件的 payload 长什么样，是「运行期」由挂上来的插件决定的。想让它们全都
+//     有精确类型，得给 Ctx 加泛型 + 事件映射表(keyof/映射类型)，那是中级 TS，会
+//     盖过"一切皆插件"这个主题。真实的 DeepSeek Harness 确实那么做了(用泛型换来完整
+//     类型安全)，这是个真实的工程取舍。我们这门课在"框架内部"选可读性，在"外围
+//     (消息、工具)"选类型安全 —— 下面你会看到外围都标了类型。
 // ═══════════════════════════════════════════════════════════════
 type NextFn = () => Promise<any>
 type Listener = (payload: any, next: NextFn) => Promise<any> | any
@@ -84,7 +92,7 @@ function createToolRegistry() {
       tools[name] = { schema, run }
     },
     /** 拼成 DeepSeek/OpenAI 要的 tools 数组（发给模型看它有哪些工具） */
-    schemas() {
+    schemas(): ChatCompletionTool[] {
       return Object.entries(tools).map(([name, t]) => ({
         type: "function",
         function: { name, ...t.schema },
@@ -125,7 +133,10 @@ function bashPlugin(ctx: Ctx) {
         required: ["command"],
       },
     },
-    (args) => runBash(args.command),
+    // 注意这个 `: { command: string }`：因为 ctx.services 是 any 类型(框架从简的代价)，
+    // 通过它拿到的 register 也是 any，回调参数就失去了上下文类型 —— strict 模式下必须自己标一下。
+    // 我们顺手标成 bash 真正的参数形状。这就是 B 档"偶尔手动补一下类型"的全部成本。
+    (args: { command: string }) => runBash(args.command),
   )
 }
 
@@ -142,14 +153,19 @@ function logPlugin(ctx: Ctx) {
 // ═══════════════════════════════════════════════════════════════
 //  瘦循环：它只知道"喊人"，不知道任何具体能力
 // ═══════════════════════════════════════════════════════════════
-async function step(ctx: Ctx, history: any[]): Promise<boolean> {
+async function step(ctx: Ctx, history: ChatCompletionMessageParam[]): Promise<boolean> {
   // 「发请求前」这一刻——pre-step 瀑布。插件可以在这往即将发送的消息里加东西。
   // 现在还没人监听，base 直接返回 history 原样。L4 会来挂上第一个上下文注入插件。
-  const messages = await ctx.waterfall("pre-step", { history }, async () => history)
+  // waterfall 返回的是 any(框架内部从简)，这里用一个类型标注把它"接"成消息数组。
+  const messages: ChatCompletionMessageParam[] = await ctx.waterfall(
+    "pre-step",
+    { history },
+    async () => history,
+  )
 
   const res = await client.chat.completions.create({
     model: MODEL,
-    messages: messages as any,
+    messages, // ← 不用再 `as any` 了
     tools: ctx.services.tools.schemas(), // ← 工具清单来自注册表，不再写死
     max_tokens: 4000,
   })
@@ -158,9 +174,10 @@ async function step(ctx: Ctx, history: any[]): Promise<boolean> {
   if (!msg.tool_calls?.length) return false
 
   for (const call of msg.tool_calls) {
-    const args = JSON.parse(call.function.arguments)
+    // 同 L1：模型吐的 JSON 形状是运行期才知道的边界，用 as 声明期望形状
+    const args = JSON.parse(call.function.arguments) as { command: string }
     console.log(`\x1b[33m$ ${args.command ?? JSON.stringify(args)}\x1b[0m`)
-    const output = ctx.services.tools.execute(call.function.name, args) // ← 执行也走注册表
+    const output: string = ctx.services.tools.execute(call.function.name, args) // ← 执行也走注册表
     console.log(output.slice(0, 300))
     history.push({ role: "tool", tool_call_id: call.id, content: output })
     await ctx.emit("tool:executed", { name: call.function.name, args, output }) // ← 喊一嗓子
@@ -168,7 +185,7 @@ async function step(ctx: Ctx, history: any[]): Promise<boolean> {
   return true
 }
 
-async function runAgent(ctx: Ctx, history: any[]) {
+async function runAgent(ctx: Ctx, history: ChatCompletionMessageParam[]) {
   while (await step(ctx, history)) {}
 }
 
@@ -184,7 +201,7 @@ logPlugin(ctx) // 挂上 log 插件（纯观察，不碰主干）
 
 // ── 入口 ──────────────────────────────────────────────────
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const history: any[] = [{ role: "system", content: SYSTEM }]
+const history: ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM }]
 
 console.log("L2 · 一切皆插件")
 console.log("输入问题回车发送；输入 q 退出。\n")
