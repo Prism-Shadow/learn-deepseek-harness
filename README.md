@@ -25,7 +25,7 @@ DeepSeek Harness 之所以是它，就靠这三件事。整门课都在反复强
 
 | # | 课程 | 主打支柱 | 你会学到 |
 |---|------|---------|---------|
-| **L1** | 最裸的循环 | (铺垫) | agent 的本质：user→LLM→tool→loop；并**故意埋下三根支柱要治的病** |
+| **L1** | 最裸的循环 | (铺垫) | agent 的本质：user→LLM→tool→loop；并**故意留下三根支柱要解决的三处局限** |
 | **L2** | 一切皆插件 | **P1** | 迷你框架：`ctx` + 事件总线 + waterfall；把 bash 变成插件 |
 | **L3** | Session Log 是唯一真相 | **P2** | 用事件日志替换消息数组；从日志派生消息；surface |
 | **L4** | 对 KV Cache 敏感 | **P3** | append-only 上下文注入插件；实测 `cacheReadTokens` |

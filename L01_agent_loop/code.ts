@@ -8,11 +8,11 @@
  *                   └──────────────────────────────────────────────┘
  *                                （循环，直到模型不再调工具）
  *
- * 这一课刻意写得"朴素而有病"。请你边跑边留意这三个病根，
- * 后面三根支柱(L2 插件 / L3 事件日志 / L4 KV缓存)正是来治它们的：
- *   ❶ 所有能力都焊死在循环里(bash 就写在 loop 旁边) → L2 要把它拆成插件
- *   ❷ 对话就是一个可变数组 history，谁都能随便改 → L3 要换成只增不改的事件日志
- *   ❸ 每一步都把整个 history 重新发一遍给模型 → L4 要从 KV 缓存角度审视它
+ * 这一课刻意从简，留下三处局限。请你边跑边留意它们，
+ * 后面三根支柱(L2 插件 / L3 事件日志 / L4 KV缓存)会逐一解决：
+ *   ❶ 所有能力都焊死在循环里(bash 就写在 loop 旁边) → L2 把它拆成插件
+ *   ❷ 对话就是一个可变数组 history，谁都能随便改 → L3 换成只增不改的事件日志
+ *   ❸ 每一步都把整个 history 重新发一遍给模型 → L4 从 KV 缓存角度审视它
  */
 
 import OpenAI from "openai"
@@ -72,10 +72,10 @@ function runBash(command: string): string {
 }
 
 // ── 核心：一个 while 循环，调工具直到模型停下 ──────────────
-// history 是可变的 —— 病根 ❷ 还在，L3 治
+// history 是可变的 —— 局限 ❷ 还在，由 L3 解决
 async function agentLoop(history: ChatCompletionMessageParam[]) {
   while (true) {
-    // 病根 ❸：每转一圈，都把「整个 history」重新发给模型
+    // 局限 ❸：每转一圈，都把「整个 history」重新发给模型
     const res = await client.chat.completions.create({
       model: MODEL,
       messages: history,
