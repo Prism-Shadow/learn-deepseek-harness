@@ -2,8 +2,6 @@
 
 从最裸的一个循环开始，一课一课地把它长成一个**真正的 agent harness**。每一课是一个能独立运行的 TypeScript 小包，`npm install && npm run dev` 就能跟真实 DeepSeek 模型对话。
 
-> 这门课**不是** learn-claude-code 的翻版。Claude Code 和 DeepSeek Harness 的设计理念完全不同。这门课只借用「一课一个可运行小包」的形态，内核完全围绕 DeepSeek Harness 自己的三根支柱来讲。
-
 ---
 
 ## 三根支柱（这门课的骨架）
@@ -59,4 +57,4 @@ npm run dev
 
 ## 给 TypeScript 小白的一句话
 
-代码里凡是能省的类型我都省了（用 `any`），并配了**中文注释**。你只要看「它在干嘛」，不用管类型体操。想深究类型时再说。
+代码里凡是能省的类型我都省了（用 `any`），并配了**注释**。你只要看「它在干嘛」，不用管类型体操。想深究类型时再说。
