@@ -76,9 +76,9 @@ class Session {
     return event
   }
   deriveMessages(): ChatCompletionMessageParam[] {
-    const bySeq = new Map(this.events.map((e) => [e.seq, e]))
+    // seq 等于事件在 events 中的下标（events 只增，seq 与 push 同步自增），故可直接索引
     return this.surface.map((seq) => {
-      const e = bySeq.get(seq)!
+      const e = this.events[seq]
       switch (e.type) {
         case "user/message":
           return { role: "user", content: e.data.content }
